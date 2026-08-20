@@ -1,0 +1,45 @@
+# --- Web framework ---
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9        # file uploads
+
+# --- LangChain core + orchestration ---
+langchain==0.3.1
+langchain-core==0.3.6
+langchain-community==0.3.1
+langchain-openai==0.2.0
+
+# --- Vector store ---
+chromadb==0.5.5
+
+# --- Caching ---
+redis==5.0.8
+
+# --- Ingestion: documents ---
+pypdf==4.3.1
+python-docx==1.1.2
+python-pptx==1.0.2
+unstructured==0.15.13          # generic text/HTML extraction fallback
+
+# --- Ingestion: web & wikipedia ---
+beautifulsoup4==4.12.3
+requests==2.32.3
+wikipedia==1.4.0
+
+# --- Ingestion: audio (speech-to-text) ---
+openai-whisper==20231117
+ffmpeg-python==0.2.0
+
+# --- Config & utilities ---
+python-dotenv==1.0.1
+pydantic==2.9.2
+pydantic-settings==2.5.2
+tenacity==9.0.0                # retry/backoff for LLM & API calls
+
+# --- Testing ---
+pytest==8.3.3
+pytest-asyncio==0.24.0
+pytest-mock==3.14.0
+
+# --- Frontend (Streamlit UI) ---
+streamlit==1.38.0
