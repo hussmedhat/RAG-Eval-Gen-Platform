@@ -1,4 +1,6 @@
-from pydantic import BaseModel, Field
+import logging
+
+from pydantic import BaseModel, Field, SecretStr
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
@@ -6,8 +8,10 @@ from langchain_openai import ChatOpenAI
 from app.agents.evaluator.evaluator_memory import EvaluatorMemory
 from app.agents.prompts import EVALUATOR_SYSTEM_PROMPT
 from app.config import get_settings
+from app.cache.redis_client import get_cached_evaluation_result, set_cached_evaluation_result
 from app.ingestion.document import Document
 
+logger = logging.getLogger(__name__)
 
 class EvaluationResult(BaseModel):
     accepted: bool = Field(description="True only if all scores are >= 0.7")
@@ -35,9 +39,9 @@ _PROMPT = ChatPromptTemplate.from_messages([
 def _build_chain():
     settings=get_settings()
     llm=ChatOpenAI(
-        model_name=settings.evaluator_model,
+        model=settings.evaluator_model,
         base_url=settings.openrouter_base_url,
-        api_key=settings.openrouter_api_key,
+        api_key=SecretStr(settings.openrouter_api_key),
     )
     return _PROMPT | llm | _parser
 
@@ -58,16 +62,24 @@ def evaluate_answer(
         memory:EvaluatorMemory|None=None,
 )->EvaluationResult:
     context=_format_context(retrieved)
-    chain=_build_chain()
-
-    result=chain.invoke({
-        "context":context,
-        "question":question,
-        "answer":answer,
-    })
+    cached = get_cached_evaluation_result(question, answer, context)
+    if cached is not None:
+        result = EvaluationResult(**cached)
+    else:
+        chain=_build_chain()
+        try:
+            result=chain.invoke({
+                "context":context,
+                "question":question,
+                "answer":answer,
+            })
+        except Exception as e:
+            logger.exception("evaluator llm call failed")
+            raise RuntimeError(f"Evaluator LLM call failed: {e}") from e
+        set_cached_evaluation_result(question, answer, context, result.dict())
 
     if memory is not None:
-        memory.addevaluation_input(f"Question: {question}\nAnswer graded: {answer}")
+        memory.add_evaluation_input(f"Question: {question}\nAnswer graded: {answer}")
         memory.add_verdict(
             f"accepted={result.accepted}, feedback={result.feedback or '(none)'}"
         )

@@ -1,3 +1,4 @@
+# app/ingestion/loaders/wikipedia_loader.py
 import wikipedia
 
 from app.ingestion.document import Document
@@ -9,36 +10,55 @@ def load_wikipedia(title: str, lang: str = "en") -> list[Document]:
     try:
         page = wikipedia.page(title, auto_suggest=False)
     except wikipedia.exceptions.DisambiguationError as e:
-        # pick the first real option rather than failing outright
         page = wikipedia.page(e.options[0], auto_suggest=False)
     except wikipedia.exceptions.PageError:
-        raise FileNotFoundError(f"Wikipedia page not found: {title}")
+        results = wikipedia.search(title)
+        if not results:
+            raise FileNotFoundError(f"Wikipedia page not found: {title}")
+        try:
+            page = wikipedia.page(results[0], auto_suggest=False)
+        except wikipedia.exceptions.DisambiguationError as e:
+            page = wikipedia.page(e.options[0], auto_suggest=False)
+        except wikipedia.exceptions.PageError:
+            raise FileNotFoundError(f"Wikipedia page not found: {title}")
 
     documents: list[Document] = []
-
-    # page.content contains "== Section ==" markers; split on those
-    raw_sections = page.content.split("\n\n\n") if page.content else []
     section_name = "Introduction"
+    buffer: list[str] = []
+    idx = 0
 
-    for idx, chunk in enumerate(page.content.split("\n\n"), start=1):
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        if chunk.startswith("=="):
-            section_name = chunk.strip("= ").strip()
-            continue
-
-        documents.append(
-            Document(
-                content=chunk,
-                metadata={
-                    "source_type": "wikipedia",
-                    "source_name": page.title,
-                    "url": page.url,
-                    "section": section_name,
-                    "section_index": idx,
-                },
+    def flush():
+        nonlocal idx
+        text = "\n".join(buffer).strip()
+        if text:
+            idx += 1
+            documents.append(
+                Document(
+                    content=text,
+                    metadata={
+                        "source_type": "wikipedia",
+                        "source_name": page.title,
+                        "url": page.url,
+                        "section": section_name,
+                        "section_index": idx,
+                    },
+                )
             )
-        )
+        buffer.clear()
+
+    for line in page.content.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("==") and stripped.endswith("=="):
+            flush()  # save whatever was buffered under the previous section
+            section_name = stripped.strip("= ").strip()
+            continue
+        buffer.append(stripped)
+        # flush every ~3 lines to keep chunks reasonably small
+        if len(buffer) >= 3:
+            flush()
+
+    flush()  # save any trailing buffered content
 
     return documents

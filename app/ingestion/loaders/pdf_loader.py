@@ -1,12 +1,12 @@
 #app/ingestion/loaders/pdf_loader.py
 
-from pathlib import path
+from pathlib import Path
 from pypdf import PdfReader
 
 from app.ingestion.document import Document
 
-def load_pdf(file_path: path) -> list[Document]:
-    path = path(file_path)
+def load_pdf(file_path: Path) -> list[Document]:
+    path = Path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
     reader= PdfReader(file_path)

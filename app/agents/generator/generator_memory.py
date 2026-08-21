@@ -1,10 +1,10 @@
-from langchain_core.chat_history import InMemoryChatmessagingHistory
+from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.messages import BaseMessage
 
 class GenerateMemory:
 
     def __init__(self):
-        self._history= InMemoryChatmessagingHistory()
+        self._history= InMemoryChatMessageHistory()
 
     def add_user_message(self,message:str)-> None:
         self._history.add_user_message(message)
