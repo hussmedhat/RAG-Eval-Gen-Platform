@@ -28,7 +28,7 @@ def _build_chain():
         model=settings.generator_model,
         base_url=settings.openrouter_base_url,
         api_key = SecretStr(settings.openrouter_api_key),
-        temperature=0,  # deterministic rewriting, no creativity needed
+        temperature=0,
     )
     return _REWRITER_PROMPT | llm | StrOutputParser()
 
