@@ -8,6 +8,7 @@ documents often survive chunking as either:
   2. Loosely whitespace-aligned columns (common when a PDF table gets
      flattened to plain text during extraction).
 """
+
 import re
 
 from langchain_core.output_parsers import PydanticOutputParser
