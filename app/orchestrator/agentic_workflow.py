@@ -1,16 +1,5 @@
 """
 Agentic Workflow Orchestrator
-
-Wires the three agents from the spec into a single flow:
-
-    Retriever Agent -> Analyst Agent -> Answer Agent
-
-Retriever finds evidence, Analyst judges sufficiency (looping back to
-the Retriever for more evidence when needed) and extracts structured
-findings, Answer Agent turns those findings into the final, cited
-response. This is a separate orchestrator from workflow.py's
-Generator/Evaluator self-critique loop — the two are independent
-pipelines, not composed together.
 """
 
 import logging
@@ -20,8 +9,11 @@ from langchain_core.runnables import RunnableLambda
 from app.agents.answer.answer_agent import AnswerOutput, generate_final_answer
 from app.agents.analyst.analyst_agent import analyze_evidence
 from app.agents.retriever.retriever_agent import retrieve_evidence
+from app.trace import get_trace, install_trace_handler, start_trace
 
 logger = logging.getLogger(__name__)
+
+install_trace_handler()  # attach once at import time
 
 
 class AgenticWorkflowResult:
@@ -33,6 +25,11 @@ class AgenticWorkflowResult:
         max_loops_reached: bool,
         num_citations: int,
         disclaimer: str | None,
+        key_facts: list[str],
+        tables: list[dict],
+        comparison: dict | None,
+        data_analysis: dict | None,
+        trace: list[dict],
     ):
         self.answer = answer
         self.sufficient = sufficient
@@ -40,6 +37,11 @@ class AgenticWorkflowResult:
         self.max_loops_reached = max_loops_reached
         self.num_citations = num_citations
         self.disclaimer = disclaimer
+        self.key_facts = key_facts
+        self.tables = tables
+        self.comparison = comparison
+        self.data_analysis = data_analysis
+        self.trace = trace
 
     def to_dict(self) -> dict:
         return {
@@ -49,10 +51,16 @@ class AgenticWorkflowResult:
             "max_loops_reached": self.max_loops_reached,
             "num_citations": self.num_citations,
             "disclaimer": self.disclaimer,
+            "key_facts": self.key_facts,
+            "tables": self.tables,
+            "comparison": self.comparison,
+            "data_analysis": self.data_analysis,
+            "trace": self.trace,
         }
 
 
 def _run_agentic_workflow(question: str, history: str = "") -> AgenticWorkflowResult:
+    start_trace()
     logger.info("starting agentic workflow for question: %r", question)
 
     evidence = retrieve_evidence(question, history=history)
@@ -66,6 +74,8 @@ def _run_agentic_workflow(question: str, history: str = "") -> AgenticWorkflowRe
 
     answer_output: AnswerOutput = generate_final_answer(question, analyst_output)
 
+    findings = analyst_output.findings
+    trace = get_trace()
     return AgenticWorkflowResult(
         answer=answer_output.answer,
         sufficient=analyst_output.sufficient,
@@ -73,11 +83,19 @@ def _run_agentic_workflow(question: str, history: str = "") -> AgenticWorkflowRe
         max_loops_reached=analyst_output.max_loops_reached,
         num_citations=len(answer_output.cited_sources),
         disclaimer=answer_output.disclaimer,
+        key_facts=findings.key_facts,
+        tables=[t.model_dump() for t in findings.tables],
+        comparison=findings.comparison.model_dump() if findings.comparison else None,
+        data_analysis=findings.data_analysis,
+        trace=trace,
     )
 
 
-# LCEL wrapper, same pattern as workflow.py's workflow_chain
-agentic_workflow_chain = RunnableLambda(lambda inputs: _run_agentic_workflow(**inputs))
+def _invoke_agentic_workflow(inputs: dict[str, str]) -> AgenticWorkflowResult:
+    return _run_agentic_workflow(question=inputs["question"], history=inputs.get("history", ""))
+
+
+agentic_workflow_chain = RunnableLambda(_invoke_agentic_workflow)
 
 
 def run_agentic_workflow(question: str, history: str = "") -> AgenticWorkflowResult:

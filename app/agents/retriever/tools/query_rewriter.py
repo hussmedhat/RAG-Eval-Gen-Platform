@@ -7,7 +7,6 @@ clear, standalone, retrieval-friendly query using the LLM.
 """
 
 
-
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
@@ -29,6 +28,7 @@ def _build_chain():
         base_url=settings.openrouter_base_url,
         api_key = SecretStr(settings.openrouter_api_key),
         temperature=0,
+        max_tokens=256,
     )
     return _REWRITER_PROMPT | llm | StrOutputParser()
 

@@ -51,6 +51,7 @@ def _build_chain():
         model=settings.generator_model,
         base_url=settings.openrouter_base_url,
         api_key=SecretStr(settings.openrouter_api_key),
+         max_tokens=1024,
     )
     return _PROMPT | llm | StrOutputParser()
 

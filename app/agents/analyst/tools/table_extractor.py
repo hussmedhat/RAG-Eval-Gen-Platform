@@ -1,6 +1,6 @@
 """
 Analyst Tool 2: Table Extractor
-----------------------------------
+
 Pulls structured tables (metrics, results, comparisons) out of the
 plain-text chunk content the Retriever hands over. Tables in source
 documents often survive chunking as either:

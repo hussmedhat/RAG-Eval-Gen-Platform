@@ -15,7 +15,9 @@ Agent's job. The Analyst only decides "do we have enough, and what
 does it mean," and hands its findings downstream.
 """
 
+import json
 import logging
+import re
 
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -28,6 +30,7 @@ from app.agents.analyst.tools.evidence_request import request_more_evidence
 from app.agents.analyst.tools.table_extractor import ExtractedTable, extract_table
 from app.config import get_settings
 from app.ingestion.document import Document
+
 
 logger = logging.getLogger(__name__)
 
@@ -69,20 +72,53 @@ _ASSESS_PROMPT = ChatPromptTemplate.from_messages([
      "evidence, set sufficient=false and write a specific, standalone "
      "follow-up query that would retrieve the missing piece. If the question "
      "involves comparing or ranking numeric values across named entities, "
-     "extract those values so they can be analyzed precisely."),
+     "extract those values so they can be analyzed precisely.\n\n"
+     "IMPORTANT: Output a single flat JSON object with the exact field names "
+     "shown below, populated with real values. Do NOT wrap the object in a "
+     "'properties' key, do NOT include 'type', 'required', or any other "
+     "JSON-Schema keywords — those describe the shape, they are not part of "
+     "your answer."),
     ("human", "Question: {question}\n\nEvidence:\n{evidence_block}\n\n{format_instructions}"),
 ]).partial(format_instructions=_parser.get_format_instructions())
 
 
-def _build_assessment_chain():
+def _build_assessment_llm() -> ChatOpenAI:
+    """Returns just the raw LLM (no prompt, no parser attached) so _assess
+    can pipe it with the prompt exactly once and inspect the raw text
+    before parsing — needed for the repair step below."""
     settings = get_settings()
-    llm = ChatOpenAI(
+    return ChatOpenAI(
         model=settings.evaluator_model,
         base_url=settings.openrouter_base_url,
         api_key=SecretStr(settings.openrouter_api_key),
         temperature=0,
+        max_tokens=1024,
     )
-    return _ASSESS_PROMPT | llm | _parser
+
+
+def _repair_and_parse(raw_text: str) -> AnalysisAssessment:
+    """Tries the normal parser first. If the model wrapped its answer in a
+    JSON-Schema-shaped 'properties' key instead of a flat object (a known
+    failure mode with weaker/free models echoing the format instructions
+    back verbatim), unwrap it and retry once before giving up."""
+    try:
+        return _parser.parse(raw_text)
+    except Exception:
+        pass
+
+    match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+    if not match:
+        raise ValueError(f"No JSON object found in model output: {raw_text!r}")
+
+    try:
+        parsed = json.loads(match.group(0))
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Model output was not valid JSON: {raw_text!r}") from e
+
+    if "properties" in parsed and isinstance(parsed["properties"], dict):
+        parsed = parsed["properties"]
+
+    return AnalysisAssessment.model_validate(parsed)
 
 
 def _format_evidence(evidence: list[Document]) -> str:
@@ -94,14 +130,35 @@ def _format_evidence(evidence: list[Document]) -> str:
     )
 
 
-def _assess(question: str, evidence: list[Document]) -> AnalysisAssessment:
-    chain = _build_assessment_chain()
+def _assess(question: str, evidence: list[Document], max_retries: int = 2) -> AnalysisAssessment:
+    llm = _build_assessment_llm()
     evidence_block = _format_evidence(evidence)
-    try:
-        return chain.invoke({"question": question, "evidence_block": evidence_block})
-    except Exception as e:
-        logger.exception("analyst assessment llm call failed")
-        raise RuntimeError(f"Analyst assessment LLM call failed: {e}") from e
+
+    last_error: Exception | None = None
+    for attempt in range(1, max_retries + 2):  # e.g. max_retries=2 -> 3 total attempts
+        try:
+            raw_response = (_ASSESS_PROMPT | llm).invoke({
+                "question": question,
+                "evidence_block": evidence_block,
+            })
+            content = raw_response.content
+            raw_text = content if isinstance(content, str) else str(content)
+
+            if not raw_text.strip():
+                logger.warning(
+                    "analyst assessment attempt %s returned an empty response, retrying", attempt
+                )
+                last_error = ValueError("Model returned an empty response")
+                continue
+
+            return _repair_and_parse(raw_text)
+
+        except Exception as e:
+            last_error = e
+            logger.warning("analyst assessment attempt %s failed: %s", attempt, e)
+
+    logger.exception("analyst assessment llm call failed after %s attempts", max_retries + 1)
+    raise RuntimeError(f"Analyst assessment LLM call failed after retries: {last_error}") from last_error
 
 
 # ---- Findings compiled once evidence is judged sufficient (or loops run out) ----
@@ -201,9 +258,17 @@ def analyze_evidence(
             logger.warning("analyst marked evidence insufficient but gave no follow-up query")
             break
 
+        evidence_count_before = len(current_evidence)
         current_evidence = request_more_evidence(
             assessment.follow_up_query, current_evidence, history=history,
         )
+
+        if len(current_evidence) == evidence_count_before:
+            logger.info(
+                "analyst loop %s: follow-up query returned no new evidence, stopping early",
+                loop,
+            )
+            break
 
     logger.warning("analyst reached max loops (%s) without sufficient evidence", max_loops)
     findings = _compile_findings(question, current_evidence, assessment) if assessment else AnalystFindings(key_facts=[])
