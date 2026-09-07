@@ -2,13 +2,11 @@
 Streamlit front end for the 3-agent pipeline (Retriever -> Analyst -> Answer),
 talking to app/agentic_main.py.
 
-Two tabs:
-  - Ingest Knowledge: same as Part 1 (file / URL / Wikipedia)
-  - Ask: a lightweight chat interface. Unlike Part 1, this passes running
-    conversation history to the backend so the Retriever's Query Rewriter
-    tool can resolve follow-up questions ("what about its downsides?")
-    into standalone queries.
-
+Three tabs:
+  - Ingest Knowledge: file (incl. images via OCR) / URL / Wikipedia.
+  - Ask: chat interface with typed OR voice-recorded questions.
+  - (voice recording uses Streamlit's built-in st.audio_input, sent to
+    /voice/transcribe before being routed into the normal /ask flow.)
 """
 import time
 
@@ -34,10 +32,12 @@ tab_ingest, tab_ask = st.tabs(["\U0001F4E5 Ingest Knowledge", "\U0001F4AC Ask"])
 # =========================================================
 with tab_ingest:
     st.subheader("Upload a file")
+    st.caption("PDF, DOCX, TXT, PPTX, WAV, source code, or an image (text is extracted via OCR)")
     uploaded = st.file_uploader(
-        "PDF, DOCX, TXT, PPTX, WAV, or source code",
+        "Choose a file",
         type=["pdf", "docx", "txt", "pptx", "ppt", "wav", "py", "js", "ts",
-              "java", "cpp", "c", "go", "rb", "rs", "cs"],
+              "java", "cpp", "c", "go", "rb", "rs", "cs",
+              "png", "jpg", "jpeg", "bmp", "tiff"],
     )
     if uploaded is not None and st.button("Ingest file"):
         with st.spinner("Ingesting..."):
@@ -92,7 +92,7 @@ with tab_ingest:
 # =========================================================
 with tab_ask:
     if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []  # list of {"question": ..., "answer": ...}
+        st.session_state.chat_history = []
 
     for turn in st.session_state.chat_history:
         with st.chat_message("user"):
@@ -100,7 +100,34 @@ with tab_ask:
         with st.chat_message("assistant"):
             st.write(turn["answer"])
 
-    question = st.chat_input("Ask a question about your ingested documents")
+    # ---- Voice input ----
+    st.markdown("**\U0001F3A4 Ask by voice**")
+    audio_value = st.audio_input("Record your question")
+    voice_question: str | None = None
+
+    if audio_value is not None:
+        if st.button("Transcribe & ask"):
+            with st.spinner("Transcribing..."):
+                try:
+                    resp = requests.post(
+                        f"{api_base}/voice/transcribe",
+                        files={"file": ("recording.wav", audio_value.getvalue(), "audio/wav")},
+                        timeout=90,
+                    )
+                    if resp.ok:
+                        voice_question = resp.json()["question"]
+                        st.success(f"Heard: \u201c{voice_question}\u201d")
+                    else:
+                        st.error(resp.json().get("detail", resp.text))
+                except requests.RequestException as e:
+                    st.error(f"Transcription request failed: {e}")
+
+    st.divider()
+
+    # ---- Typed input ----
+    typed_question = st.chat_input("Or type your question about your ingested documents")
+
+    question = voice_question or typed_question
 
     if question:
         with st.chat_message("user"):
@@ -150,11 +177,13 @@ with tab_ask:
                         trace = data.get("trace", [])
                         if trace:
                             st.markdown("**Pipeline log:**")
-                            log_lines = "\n".join(
-                                f"{entry['level']:<7} {entry['logger'].split('.')[-1]}: {entry['message']}"
-                                for entry in trace
-                            )
-                            st.code(log_lines, language="log")
+                            log_lines = []
+                            for entry in trace:
+                                prefix = "\u26a0\ufe0f " if "0 chunks selected" in entry["message"] else ""
+                                log_lines.append(
+                                    f"{prefix}{entry['level']:<7} {entry['logger'].split('.')[-1]}: {entry['message']}"
+                                )
+                            st.code("\n".join(log_lines), language="log")
 
                         if data["key_facts"]:
                             st.markdown("**Key facts noted by the Analyst:**")
@@ -204,6 +233,7 @@ with tab_ask:
 
                         st.markdown("**Raw response:**")
                         st.json(data)
+
                     st.session_state.chat_history.append({"question": question, "answer": answer_text})
                 else:
                     st.error(resp.json().get("detail", resp.text))

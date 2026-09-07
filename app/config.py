@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     embedding_model: str = os.getenv("EMBEDDING_MODEL") or "liquid/lfm-2.5-embedGet-ChildItem -Force .envding-350m:free"
     embedding_base_url: str = os.getenv("EMBEDDING_BASE_URL") or ""
 
+    transcription_model: str = os.getenv("TRANSCRIPTION_MODEL") or "openai/whisper-1"
+    tesseract_cmd: str = os.getenv("TESSERACT_CMD") or ""
+
 
 
 

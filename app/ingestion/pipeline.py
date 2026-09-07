@@ -1,6 +1,7 @@
 import logging
 from enum import Enum
 
+from app.agents.vision.ocr import extract_text_from_image
 from app.config import get_settings
 from app.ingestion.chuncking import chunk_documents
 from app.ingestion.document import Document
@@ -29,6 +30,7 @@ class SourceType(str, Enum):
     WEB = "web"
     WIKIPEDIA = "wikipedia"
     WAV = "wav"
+    IMAGE = "image"
 
 
 def _load(source: str, source_type: SourceType) -> list[Document]:
@@ -43,6 +45,7 @@ def _load(source: str, source_type: SourceType) -> list[Document]:
         SourceType.WEB: lambda: load_web(source),
         SourceType.WIKIPEDIA: lambda: load_wikipedia(source),
         SourceType.WAV: lambda: load_audio(source, settings.whisper_model),
+        SourceType.IMAGE: lambda: extract_text_from_image(source),
     }
 
     loader = loaders.get(source_type)
@@ -81,12 +84,17 @@ def ingest_source(source: str, source_type: SourceType, chunk_size: int = 500, c
 def infer_source_type(filename: str) -> SourceType:
     ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     mapping = {
-        ".pdf": SourceType.PDF,
+       ".pdf": SourceType.PDF,
         ".docx": SourceType.DOCX,
         ".txt": SourceType.TXT,
         ".pptx": SourceType.PPTX,
         ".ppt": SourceType.PPTX,
         ".wav": SourceType.WAV,
+        ".png": SourceType.IMAGE,
+        ".jpg": SourceType.IMAGE,
+        ".jpeg": SourceType.IMAGE,
+        ".bmp": SourceType.IMAGE,
+        ".tiff": SourceType.IMAGE,
     }
     if ext in mapping:
         return mapping[ext]

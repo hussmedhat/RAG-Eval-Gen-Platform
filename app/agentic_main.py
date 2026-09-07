@@ -10,6 +10,7 @@ from app.ingestion.pipeline import SourceType, infer_source_type, ingest_source
 from app.logging_config import configure_logging
 from app.orchestrator.agentic_workflow import run_agentic_workflow
 from app.validation import validate_upload, validate_url
+from app.agents.voice.transcriptions import transcribe_audio
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -29,6 +30,9 @@ class WikipediaIngestRequest(BaseModel):
 class AskRequest(BaseModel):
     question: str
     history: str = ""
+
+class TranscribeResponse(BaseModel):
+    question: str
 
 
 @app.post("/ingest/file")
@@ -98,6 +102,24 @@ async def ask(req: AskRequest):
         raise HTTPException(status_code=502, detail=str(e))
 
     return result.to_dict()
+
+@app.post("/voice/transcribe", response_model=TranscribeResponse)
+async def voice_transcribe(file: UploadFile = File(...)):
+    """Accepts a recorded audio clip and returns the transcribed text.
+    The frontend then sends that text to /ask as a normal question —
+    this endpoint does transcription only, it does not run the agentic
+    pipeline itself."""
+    contents = await file.read()
+    audio_format = (file.filename or "audio.wav").rsplit(".", 1)[-1].lower()
+
+    try:
+        text = transcribe_audio(contents, audio_format=audio_format)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    return TranscribeResponse(question=text)
 
 
 @app.get("/health")
