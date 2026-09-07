@@ -2,7 +2,8 @@
 from pathlib import Path
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".pptx", ".ppt", ".wav",
-                       ".py", ".js", ".ts", ".java", ".cpp", ".c", ".go", ".rb", ".rs", ".cs"}
+                       ".py", ".js", ".ts", ".java", ".cpp", ".c", ".go", ".rb", ".rs", ".cs",
+                       ".png", ".jpg", ".jpeg", ".bmp", ".tiff"}
 MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024  # 25 MB
 
 

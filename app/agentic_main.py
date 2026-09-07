@@ -6,14 +6,28 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
+from app.config import get_settings
 from app.ingestion.pipeline import SourceType, infer_source_type, ingest_source
 from app.logging_config import configure_logging
 from app.orchestrator.agentic_workflow import run_agentic_workflow
 from app.validation import validate_upload, validate_url
 from app.agents.voice.transcriptions import transcribe_audio
+from fastapi.responses import FileResponse
+from app.agents.report.report_agent import generate_report
 
 configure_logging()
 logger = logging.getLogger(__name__)
+
+# --- LangSmith tracing ---
+# .env is already loaded into os.environ by app/config.py's load_dotenv(),
+# and LangChain's tracer reads LANGSMITH_* vars from os.environ directly —
+# no code needs to "activate" it. This just confirms at startup whether
+# it picked up the right values.
+settings = get_settings()
+if settings.langsmith_tracing:
+    logger.info("LangSmith tracing enabled (project=%s)", settings.langsmith_project)
+else:
+    logger.info("LangSmith tracing disabled")
 
 app = FastAPI(title="Agentic RAG Platform (Retriever -> Analyst -> Answer)")
 
@@ -33,6 +47,10 @@ class AskRequest(BaseModel):
 
 class TranscribeResponse(BaseModel):
     question: str
+
+class ReportRequest(BaseModel):
+    question: str
+    history: str = ""
 
 
 @app.post("/ingest/file")
@@ -120,6 +138,21 @@ async def voice_transcribe(file: UploadFile = File(...)):
         raise HTTPException(status_code=502, detail=str(e))
 
     return TranscribeResponse(question=text)
+
+
+@app.post("/ask/report")
+async def ask_with_report(req: ReportRequest):
+    """Runs the full agentic workflow, then formats the result as a PDF."""
+    try:
+        result = run_agentic_workflow(req.question, history=req.history)
+        pdf_path = generate_report(req.question, result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        logger.exception("report generation failed")
+        raise HTTPException(status_code=502, detail=str(e))
+
+    return FileResponse(pdf_path, media_type="application/pdf", filename="report.pdf")
 
 
 @app.get("/health")

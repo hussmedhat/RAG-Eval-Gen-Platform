@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     tesseract_cmd: str = os.getenv("TESSERACT_CMD") or ""
 
 
+        # --- LangSmith monitoring ---
+    langsmith_tracing: bool = os.getenv("LANGSMITH_TRACING", "false").lower() == "true"
+    langsmith_api_key: str = os.getenv("LANGSMITH_API_KEY") or ""
+    langsmith_project: str = os.getenv("LANGSMITH_PROJECT") or "MultiAgent-RAG"
+    langsmith_endpoint: str = os.getenv("LANGSMITH_ENDPOINT") or "https://api.smith.langchain.com"
+
+
 
 
 
